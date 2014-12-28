@@ -12,21 +12,23 @@ import (
 )
 
 const (
-	THRESHOLD = 80
-	DELAY     = 10 * time.Second
+	CPU_THRESHOLD = 80
+	MEM_THRESHOLD = 30
+	DELAY         = 10 * time.Second
 )
 
 type processInfo struct {
 	Name string
 	PID  int64
 	CPU  float64
+	MEM  float64
 }
 
 type processList []processInfo
 
 func getProcessList() processList {
 	results := make(processList, 0)
-	cmd := exec.Command("ps", "-o", "%cpu,pid,command", "-er")
+	cmd := exec.Command("ps", "-o", "%cpu,%mem,pid,command", "-er")
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	err := cmd.Run()
@@ -44,6 +46,7 @@ func getProcessList() processList {
 		if len(p) <= 0 {
 			continue
 		}
+
 		cpuEnd := strings.Index(p, " ")
 		cpu, err := strconv.ParseFloat(p[:cpuEnd], 64)
 		if err != nil {
@@ -51,6 +54,15 @@ func getProcessList() processList {
 		}
 
 		p = p[cpuEnd:]
+		p = strings.TrimSpace(p)
+
+		memEnd := strings.Index(p, " ")
+		mem, err := strconv.ParseFloat(p[:memEnd], 64)
+		if err != nil {
+			panic(fmt.Sprintf("%s", err))
+		}
+
+		p = p[memEnd:]
 		p = strings.TrimSpace(p)
 
 		pidEnd := strings.Index(p, " ")
@@ -62,7 +74,7 @@ func getProcessList() processList {
 		p = p[pidEnd:]
 		name := strings.TrimSpace(p)
 
-		results = append(results, processInfo{name, pid, cpu})
+		results = append(results, processInfo{name, pid, cpu, mem})
 	}
 	return results
 }
@@ -76,10 +88,21 @@ func fetchName(p processInfo) string {
 	}
 }
 
-func notify(p processInfo) {
+func cpuNotify(p processInfo) {
 	note := gosxnotifier.NewNotification("High CPU usage")
-	note.Title = "High CPU usage detected"
+	note.Title = "Process Watcher"
 	note.Subtitle = fmt.Sprintf("%s is using a lot of CPU", fetchName(p))
+	note.Sound = gosxnotifier.Basso
+	err := note.Push()
+	if err != nil {
+		panic(fmt.Sprintf("%s", err))
+	}
+}
+
+func memNotify(p processInfo) {
+	note := gosxnotifier.NewNotification("High memory usage")
+	note.Title = "Process Watcher"
+	note.Subtitle = fmt.Sprintf("%s is using a lot of memory", fetchName(p))
 	note.Sound = gosxnotifier.Basso
 	err := note.Push()
 	if err != nil {
@@ -106,20 +129,33 @@ func (x *processList) getBlacklisting(p processInfo) int {
 }
 
 func main() {
-	blacklist := make(processList, 0)
+	pblacklist := make(processList, 0)
+	mblacklist := make(processList, 0)
 	for {
 		res := getProcessList()
 		for _, i := range res {
-			if i.CPU > THRESHOLD {
-				if !blacklist.isBlacklisted(i) {
-					notify(i)
-					blacklist = append(blacklist, i)
+			if i.CPU > CPU_THRESHOLD {
+				if !pblacklist.isBlacklisted(i) {
+					cpuNotify(i)
+					pblacklist = append(pblacklist, i)
 				}
-			} else if i.CPU < THRESHOLD/2 {
-				if x := blacklist.getBlacklisting(i); x != -1 {
-					blacklist = append(blacklist[:x], blacklist[x+1:]...)
+			} else if i.CPU < CPU_THRESHOLD/2 {
+				if x := pblacklist.getBlacklisting(i); x != -1 {
+					pblacklist = append(pblacklist[:x], pblacklist[x+1:]...)
 				}
 			}
+
+			if i.MEM > MEM_THRESHOLD {
+				if !mblacklist.isBlacklisted(i) {
+					memNotify(i)
+					mblacklist = append(mblacklist, i)
+				}
+			} else if i.MEM < MEM_THRESHOLD/2 {
+				if x := mblacklist.getBlacklisting(i); x != -1 {
+					mblacklist = append(mblacklist[:x], mblacklist[x+1:]...)
+				}
+			}
+
 		}
 		time.Sleep(DELAY)
 	}
