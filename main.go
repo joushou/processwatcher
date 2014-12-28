@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	THRESHOLD = 100
+	THRESHOLD = 80
 	DELAY     = 10 * time.Second
 )
 
@@ -110,10 +110,12 @@ func main() {
 	for {
 		res := getProcessList()
 		for _, i := range res {
-			if i.CPU > THRESHOLD && !blacklist.isBlacklisted(i) {
-				notify(i)
-				blacklist = append(blacklist, i)
-			} else {
+			if i.CPU > THRESHOLD {
+				if !blacklist.isBlacklisted(i) {
+					notify(i)
+					blacklist = append(blacklist, i)
+				}
+			} else if i.CPU < THRESHOLD/2 {
 				if x := blacklist.getBlacklisting(i); x != -1 {
 					blacklist = append(blacklist[:x], blacklist[x+1:]...)
 				}
